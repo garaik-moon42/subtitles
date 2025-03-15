@@ -2,7 +2,7 @@ import java.io.FileReader
 import java.time.LocalTime
 import java.util.*
 
-data class Subtitle(val start:LocalTime, val end:LocalTime, val text:String)
+data class Subtitle(val start:LocalTime, val end:LocalTime, val text: String, val pos:Int = Int.MAX_VALUE)
 
 private fun readScript():String {
     val regexAnyWhitespace = Regex("\\s+")
@@ -26,7 +26,7 @@ private fun readSubtitles():List<Subtitle> {
     FileReader("input/sample-subtitles.srt").useLines { lines ->
         val i = lines.iterator()
         while (i.hasNext()) {
-            val index = i.next().toInt()
+            i.next()
             val timing = i.next().replace(",", ".")
             val parts = timing.split(" --> ")
             if (parts.size == 2) {
@@ -74,13 +74,32 @@ private fun levenshtein(lhs: String, rhs: String): Int {
     return dp[lhs.length][rhs.length]
 }
 
-private fun displayResult(script: String, subtitles:List<Subtitle>, subtitlePositions:List<Pair<Int, Int>>) {
-    subtitles.forEachIndexed { index, subtitle ->
-        println("${index + 1}.")
-        println("Subtitle >${subtitle.text}<")
-        println("Script   >${script.substring(subtitlePositions[index].first, subtitlePositions[index].second)}<")
-        println("------------------------------------------------------------")
+private fun fixSubtitles(script: String, subtitles: List<Subtitle>):List<Subtitle> {
+    val fixedSubtitles = mutableListOf<Subtitle>()
+    subtitles.forEachIndexed() { index, subtitle ->
+        val from = subtitle.pos
+        val to = if (index == subtitles.size - 1) script.length else subtitles[index + 1].pos
+        val text = wordAwareWrap(script.substring(from, to).trim(), 50).joinToString("\n")
+        fixedSubtitles.add(Subtitle(subtitle.start, subtitle.end, text, subtitle.pos))
     }
+    return fixedSubtitles.toList()
+}
+
+private fun wordAwareWrap(text: String, width: Int):List<String> {
+    val out = mutableListOf<String>()
+    var currentLine = ""
+    text.split(" ").forEach { word ->
+        if (currentLine.length + word.length > width) {
+            out.add(currentLine)
+            currentLine = ""
+        }
+        if (currentLine.isNotEmpty()) {
+            currentLine += " "
+        }
+        currentLine += word
+    }
+    out.add(currentLine)
+    return out.toList()
 }
 
 private fun distanceAtPos(script: String, subtitle: Subtitle, pos: Int): Int {
@@ -89,60 +108,53 @@ private fun distanceAtPos(script: String, subtitle: Subtitle, pos: Int): Int {
     return levenshtein(lhs, rhs)
 }
 
-private fun adjustPositions(script: String, start: Int, end: Int): Pair<Int, Int> {
-    fun isPunctuation(c: Char) = c == '.' || c == ',' || c == ';' || c == '!' || c == '?' || c == ':' || c == '\'' || c == '"'
-
-    var adjustedStart = start
-    var adjustedEnd = end
-    if (script[adjustedStart].isWhitespace()) {
-        adjustedStart++
+private fun adjustPosition(script: String, pos: Int): Int {
+    var adjustedPos = pos
+    if (script[adjustedPos].isWhitespace()) {
+        adjustedPos++
     }
     else {
-        while (adjustedStart > 0 && !script[adjustedStart - 1].isWhitespace()) adjustedStart--
+        while (adjustedPos > 0 && !script[adjustedPos - 1].isWhitespace()) adjustedPos--
     }
-    if (script[adjustedEnd - 1].isWhitespace()) {
-        adjustedEnd--
-    }
-    else if (!isPunctuation(script[adjustedEnd - 1])) {
-        while (adjustedEnd < script.length && script[adjustedEnd].isLetterOrDigit()) adjustedEnd++
-        if (!script[adjustedEnd].isWhitespace()) adjustedEnd++
-    }
-    return Pair(adjustedStart, adjustedEnd)
+    return adjustedPos
 }
 
-private fun detectPositions(subtitles: List<Subtitle>, script: String): MutableList<Pair<Int, Int>> {
-    val subtitlePositions = mutableListOf<Pair<Int, Int>>()
-    var subtitleIndex = 0;
-    var pos = 0;
-    do {
-        if (subtitleIndex == 142) {
-            println("here we are")
-        }
-        val subtitle = subtitles[subtitleIndex]
-        var minDistance = Int.MAX_VALUE
-        var minPos = 0
-
+private fun detectPositions(script: String, subtitles: List<Subtitle>):List<Subtitle> {
+    val subtitlesWithPositions = mutableListOf<Subtitle>()
+    var pos = 0
+    subtitles.forEachIndexed { subtitleIndex, subtitle ->
+        var min = Pair(Int.MAX_VALUE, 0)
         for (i in pos.. min(pos + subtitle.text.length, script.length - subtitle.text.length)) {
             val distance = distanceAtPos(script, subtitle, i)
-            if (distance < minDistance) {
-                minDistance = distance
-                minPos = i
+            if (distance < min.first) {
+                min = Pair(distance, i)
             }
         }
+        if (min.first == Int.MAX_VALUE) {
+            println("WARNING: No match for subtitle #$subtitleIndex:\n$subtitle")
+        }
+        else {
+            subtitlesWithPositions.add(Subtitle(subtitle.start, subtitle.end, subtitle.text, adjustPosition(script, min.second)))
+            pos = min.second + subtitle.text.length
+        }
+    }
+    return subtitlesWithPositions.toList()
+}
 
-        subtitlePositions.add(adjustPositions(script, minPos, minPos + subtitle.text.length))
-        pos = minPos + subtitle.text.length
-        subtitleIndex++
-        print(".")
-    } while (pos < script.length && subtitleIndex < subtitles.size)
-    return subtitlePositions
+private fun printSubtitles(subtitles: List<Subtitle>) {
+    subtitles.forEachIndexed { index, subtitle ->
+        println("${index + 1}.")
+        val start = subtitle.start.toString().replace('.', ',')
+        val end = subtitle.end.toString().replace('.', ',')
+        println("$start --> $end")
+        println(subtitle.text)
+        println()
+    }
 }
 
 fun main() {
     val script = readScript()
-    val subtitles = readSubtitles()
-    val subtitlePositions = detectPositions(subtitles, script)
-    println()
-    displayResult(script, subtitles, subtitlePositions)
+    val subtitles = fixSubtitles(script, detectPositions(script, readSubtitles()))
+    printSubtitles(subtitles)
 }
 
